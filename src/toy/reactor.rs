@@ -17,17 +17,17 @@ impl Reactor {
     }
 
     /// Adds timer into reactor
-    pub fn add_timer(&self, waker: &Waker, duration: Duration) -> TimerId {
+    pub(super) fn add_timer(&self, waker: &Waker, duration: Duration) -> TimerId {
         self.inner.borrow_mut().add_timer(waker, duration)
     }
 
     /// Cancel the timer by id. Panics if there is no timer with given id
-    pub fn cancel_timer(&self, timer_id: TimerId) {
+    pub(super) fn cancel_timer(&self, timer_id: TimerId) {
         self.inner.borrow_mut().cancel_timer(timer_id)
     }
 
     /// Waits (sleeps) for a first timer to occurs. Returns None if there is no timers to wait.
-    pub fn wait(&self) -> Option<TimerId> {
+    pub(super) fn wait(&self) -> Option<TimerId> {
         self.inner.borrow_mut().wait()
     }
 }

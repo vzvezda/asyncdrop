@@ -1,5 +1,5 @@
-use crate::reactor::TimerId;
-use crate::runtime::Runtime;
+use super::reactor::TimerId;
+use crate::toy::Runtime;
 
 use pin_project::{pin_project, pinned_drop};
 
@@ -10,7 +10,7 @@ use std::rc::Rc;
 use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 
-pub async fn sleep(rt: Rc<Runtime>, duration: Duration) {
+pub async fn sleep(rt: &Rc<Runtime>, duration: Duration) {
     Sleep::new(rt, duration).await
 }
 
@@ -29,9 +29,9 @@ struct Sleep {
 }
 
 impl Sleep {
-    fn new(rt: Rc<Runtime>, duration: Duration) -> Self {
+    fn new(rt: &Rc<Runtime>, duration: Duration) -> Self {
         Self {
-            rt,
+            rt: rt.clone(),
             poll_state: PollState::Idle(duration),
             _pinned: PhantomPinned,
         }

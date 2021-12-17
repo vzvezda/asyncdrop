@@ -1,23 +1,18 @@
-use std::future::Future;
 use std::rc::Rc;
 use std::time::Duration;
 
-mod reactor;
-mod runtime;
-mod sleep;
+mod toy;
 
-use crate::sleep::sleep;
-
-async fn async_main(rt: Rc<runtime::Runtime>) {
+async fn async_main(rt: Rc<toy::Runtime>) {
     println!("I am sleepy!");
-    sleep(rt, Duration::from_millis(1000)).await;
+    toy::sleep(&rt, Duration::from_millis(1000)).await;
     println!("I am awake, I am awake!");
-}
 
-fn starter(rt: Rc<runtime::Runtime>) -> impl Future<Output = ()> {
-    async_main(rt)
+    println!("I want sleep again...");
+    rt.nested_loop(toy::sleep(&rt, Duration::from_millis(1000)));
+    println!("Now I am awake!");
 }
 
 fn main() {
-    runtime::run(starter);
+    toy::run(|rt| async_main(rt));
 }

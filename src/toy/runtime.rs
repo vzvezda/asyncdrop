@@ -4,7 +4,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::task::{Context, Poll, Wake};
 
-use crate::reactor::{Reactor, TimerId};
+use super::reactor::TimerId;
+use crate::toy::Reactor;
 
 pub struct Runtime {
     reactor: Reactor,
@@ -23,6 +24,19 @@ impl Runtime {
     where
         FutT: Future<Output = ()>,
     {
+        let mut fut = Box::pin(fut);
+
+        let waker = Arc::new(ZeroWaker).into();
+        let mut ctx = Context::from_waker(&waker);
+
+        loop {
+            match fut.as_mut().poll(&mut ctx) {
+                Poll::Pending => self.awoken.set(Some(self.reactor().wait().unwrap())),
+                Poll::Ready(_) => return,
+            }
+        }
+
+        // can we have here a Pin<&mut RootFuture>?
         todo!()
     }
 
