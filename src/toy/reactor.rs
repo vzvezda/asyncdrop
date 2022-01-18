@@ -3,7 +3,19 @@ use std::task::Waker;
 use std::time::{Duration, Instant};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub struct TimerId(u32);
+pub struct EventId(u32);
+
+#[derive(Clone, Debug)]
+pub struct Wait {
+    pub event_id: EventId,
+    pub waker: Waker,
+}
+
+impl Wait {
+    fn new(event_id: EventId, waker: Waker) -> Self {
+        Self { event_id, waker }
+    }
+}
 
 pub struct Reactor {
     inner: RefCell<ReactorInner>,
@@ -17,32 +29,32 @@ impl Reactor {
     }
 
     /// Adds timer into reactor
-    pub(super) fn add_timer(&self, waker: &Waker, duration: Duration) -> TimerId {
+    pub(super) fn add_timer(&self, waker: &Waker, duration: Duration) -> EventId {
         self.inner.borrow_mut().add_timer(waker, duration)
     }
 
     /// Cancel the timer by id. Panics if there is no timer with given id
-    pub(super) fn cancel_timer(&self, timer_id: TimerId) {
-        self.inner.borrow_mut().cancel_timer(timer_id)
+    pub(super) fn cancel_timer(&self, event_id: EventId) {
+        self.inner.borrow_mut().cancel_timer(event_id)
     }
 
     /// Waits (sleeps) for a first timer to occurs. Returns None if there is no timers to wait.
-    pub(super) fn wait(&self) -> Option<TimerId> {
+    pub(super) fn wait(&self) -> Option<Wait> {
         self.inner.borrow_mut().wait()
     }
 }
 
 #[derive(Clone)]
 struct Timer {
-    timer_id: TimerId,
+    event_id: EventId,
     awake_on: Instant,
     waker: Waker,
 }
 
 impl Timer {
-    fn new(timer_id: TimerId, waker: &Waker, duration: Duration) -> Self {
+    fn new(event_id: EventId, waker: &Waker, duration: Duration) -> Self {
         Self {
-            timer_id,
+            event_id,
             awake_on: Instant::now() + duration,
             waker: waker.clone(),
         }
@@ -51,38 +63,39 @@ impl Timer {
 
 struct ReactorInner {
     timers: Vec<Timer>,
-    last_timer_id: u32,
+    last_event_id: u32,
 }
 
 impl ReactorInner {
     pub fn new() -> Self {
         Self {
             timers: Vec::new(),
-            last_timer_id: 0,
+            last_event_id: 0,
         }
     }
 
     /// Adds timer into reactors.
-    pub fn add_timer(&mut self, waker: &Waker, duration: Duration) -> TimerId {
-        self.last_timer_id += 1;
+    pub fn add_timer(&mut self, waker: &Waker, duration: Duration) -> EventId {
+        self.last_event_id += 1;
         self.timers
-            .push(Timer::new(TimerId(self.last_timer_id), waker, duration));
+            .push(Timer::new(EventId(self.last_event_id), waker, duration));
 
-        TimerId(self.last_timer_id)
+        EventId(self.last_event_id)
     }
 
-    /// Cancel the timer by id. Panics if timer_id is unknown.
-    pub fn cancel_timer(&mut self, timer_id: TimerId) {
+    /// Cancel the timer by id. Panics if event_id is unknown.
+    pub fn cancel_timer(&mut self, event_id: EventId) {
         let index = self
             .timers
             .iter()
-            .position(|timer| timer.timer_id == timer_id)
+            .position(|timer| timer.event_id == event_id)
             .expect("Canceled unknown timer");
 
         self.timers.remove(index);
     }
 
-    pub fn wait(&mut self) -> Option<TimerId> {
+    pub fn wait(&mut self) -> Option<Wait> {
+        // This reactor IO is only timer.
         // looking for a first timer to awake on
         let index = self
             .timers
@@ -93,7 +106,7 @@ impl ReactorInner {
 
         if let Some(index) = index {
             let Timer {
-                timer_id,
+                event_id,
                 awake_on,
                 waker,
             } = self.timers.remove(index);
@@ -103,7 +116,7 @@ impl ReactorInner {
                 std::thread::sleep(awake_on - now);
             }
 
-            Some(timer_id)
+            Some(Wait::new(event_id, waker))
         } else {
             None // No events to wait
         }

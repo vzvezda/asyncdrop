@@ -1,4 +1,4 @@
-use super::reactor::TimerId;
+use super::reactor::EventId;
 use crate::toy::Runtime;
 
 use pin_project::{pin_project, pinned_drop};
@@ -17,7 +17,7 @@ pub async fn sleep(rt: &Rc<Runtime>, duration: Duration) {
 #[derive(Copy, Clone)]
 enum PollState {
     Idle(Duration),
-    Pending(TimerId),
+    Pending(EventId),
     Done,
 }
 
@@ -42,7 +42,7 @@ impl Sleep {
         Poll::Pending
     }
 
-    fn complete(&mut self, timer_id: TimerId, waker: &Waker) -> Poll<()> {
+    fn complete(&mut self, timer_id: EventId, waker: &Waker) -> Poll<()> {
         if self.rt.is_awoken(timer_id) {
             self.poll_state = PollState::Done;
             Poll::Ready(())
@@ -51,7 +51,7 @@ impl Sleep {
         }
     }
 
-    fn cancel(&self, timer_id: TimerId) {
+    fn cancel(&self, timer_id: EventId) {
         self.rt.reactor().cancel_timer(timer_id);
     }
 }
