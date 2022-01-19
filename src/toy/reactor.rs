@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::task::Waker;
 use std::time::{Duration, Instant};
 
+// ID of the event in the reactor. This is a toy reactor, the only event is timer.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct EventId(u32);
 
@@ -85,6 +86,7 @@ impl ReactorInner {
 
     /// Cancel the timer by id. Panics if event_id is unknown.
     pub fn cancel_timer(&mut self, event_id: EventId) {
+        // todo: maybe we should also make sure that event is removed from runtime.frozen_events.
         let index = self
             .timers
             .iter()
@@ -96,7 +98,7 @@ impl ReactorInner {
 
     pub fn wait(&mut self) -> Option<Wait> {
         // This reactor IO is only timer.
-        // looking for a first timer to awake on
+        // Looking for a first timer to awake on
         let index = self
             .timers
             .iter()

@@ -9,7 +9,8 @@ use std::task::{Context, Poll};
 use pin_project::pin_project;
 
 // Make a future that completes as soon as both futures are completed. This join
-// does not create any tasks.
+// does not create tasks in runtime. Similar to `join!` in other crates except that only 2 params
+// and no return value.
 pub fn make_join2<FutT1, FutT2>(f1: FutT1, f2: FutT2) -> Join2<FutT1, FutT2>
 where
     FutT1: Future<Output = ()>,

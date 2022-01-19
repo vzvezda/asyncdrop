@@ -1,10 +1,6 @@
 // TODO:
 //   * fix warnings
-//   * fix code (add finished comments)
-//   * to git
 //   * publish
-//
-
 use std::cell::{Cell, RefCell};
 use std::future::Future;
 use std::pin::Pin;
@@ -18,6 +14,8 @@ use super::task::Task;
 use super::task::TaskPoll;
 use crate::toy::Reactor;
 
+// Implementation of toy Runtime: async executor with reactor that only capable of scheduling
+// timers. It should be enough to demo the idea.
 pub struct Runtime {
     reactor: Reactor,
     awoken_event: Cell<Option<EventId>>,
@@ -82,6 +80,8 @@ impl Runtime {
         }
     }
 
+    // Verifies if there is a event in self.frozen_events that can be polled because some of the
+    // tasks has been recently unfrozen.
     fn poll_frozen_events(&self) {
         while let Some((event_id, awoken_task)) = self.first_unfrozen_task() {
             println!("poll task from frozen_events");
@@ -127,7 +127,7 @@ impl Runtime {
         self.awoken_event.get().map_or(false, |id| id == event_id)
     }
 
-    // The block_on version is private and therefore is not reetrable
+    // The block_on version is private and therefore is not reentrable.
     fn block_on<FutT>(&self, fut: FutT)
     where
         FutT: Future<Output = ()>,
@@ -137,6 +137,7 @@ impl Runtime {
     }
 }
 
+// This is how app creates Runtime.
 pub fn run<StarterFn, FutT>(starter: StarterFn)
 where
     StarterFn: FnOnce(Rc<Runtime>) -> FutT,

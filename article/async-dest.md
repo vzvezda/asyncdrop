@@ -1,16 +1,14 @@
 # Async destruction on stable rust
 
-Async destruction is idea that exists as proposals to rust language to solve some of the corner cases of future cancellation. A typical case is that a future that owns the buffer and has scheduled the I/O operation with kernel and now someone drops the future (for example by using `select!`), so in future's `fn drop(&mut self)` we have this issue that we should notify the kernel about cancelling the pending I/O and then we should keep the buffer alive until kernel confirms the cancellation. This means that `fn drop(&mut self)` has to wait kernel async cancellation to complete and it usually means that no other work is possible in this thread. 
+Async destruction is idea that exists as proposals to rust language to solve some of the corner cases of future cancellation. A typical case is that a future that owns the buffer and has scheduled the I/O operation with kernel and now someone drops the future (for example by using `select!`), so in future's `fn drop(&mut self)` we have this issue that we should notify the kernel about cancelling the pending I/O and then keep the buffer alive until kernel confirms the cancellation. This means that `fn drop(&mut self)` has to wait kernel async cancellation to complete and it usually means that no other work is possible in this thread. 
 
 Known workaround to this is to make `Future` sync drop safe: if a buffer must be valid during async cancellation it either owned by async runtime or transferred to runtime which can safely await kernel to confirm cancellation after Future has been dropped. Another idea such as blocking the thread on `fn drop(&mut self)` waiting for async IO cancellation to complete looks too impractical to use. Imagine that that your million clients WebSocket chat blocked because of waiting a cleanup of some connection.
 
-This article is to explore if we can have a `drop()` that able to keep Future-owned buffer alive while not stalling the async code execution.
+This article is to explore if we can have a `drop()` that able to keep Future-owned buffer alive while not stalling the async code execution in a single-thread executor.
 
 ## Setup
 
-Let have a toy single-thread runtime for this research. This drafts of the idea I plan to explore in this article:
-
-https://play.rust-lang.org/?version=stable&mode=debug&edition=2021&gist=912e94f02a0b5771fc75be61a3238efd
+Let have a toy single-thread runtime for this research. This drafts osf the idea I plan to explore in this article:
 
 ```rust
 // Our toy runtime is here
@@ -19,11 +17,12 @@ mod toy {
     pub struct Reactor;
     // Runtime is executor + reactor
     pub struct Runtime {
+        // ...
         reactor: Reactor,
     }
 
     impl Runtime {
-        /// This is our function of interest
+        /// This is our function of interest to support async destruction
         pub fn nested_loop<FutT: Future>(&self, fut: FutT) -> FutT::Output {
             todo!("Do not return until fut is completed")
         }
@@ -63,7 +62,7 @@ impl Future for KernelRead {
 
     fn poll(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Self::Output> {
         todo!("1. schedule rt.io().read_async(&buffer)");
-        todo!("2. verify if async read is ready")
+        todo!("2. verify if future awoken because async read is ready")
     }
 }
 
@@ -106,10 +105,6 @@ First let address the concern that Rust has `mem::forget()` that makes it possib
 
 So when execution is in the destructor for `KernelRead` future it has to wait until kernel confirm it no longer writes into the buffer. `nested_loop()` function runs until kernel confirms that this is ok to have memory region de-allocated. So looks like drop() is blocked, but can we continue execution of other async task?
 
-## Toy runtime implemented
-
-I have implemented runtime that can be found here:
-
 ## N = 0
 
 Lets look on this example.
@@ -139,16 +134,16 @@ So what we can see:
 
 How we would like the `nested_loop()` to behave in this case? Let assume that our toy::Runtime enforces Structured Concurrency, which means that whatever happened `async_job1(&rt).await;` line is completely finished and there is no event in reactor that can be landed anywhere. So how our `nested_loop()` supposed to work? It can work just like `toy::run()` just poll the `cleanup` future and wait until reactor has an event ready.
 
-Implementation and example can be found on: [github](http://github)
-
 ## N = N + 1
 
 The code snippet in section above is async but it is sequential, which means that is no parallelism. There is nothing `nested_loop()` can do while it waits for the `cleanup()` future to complete. Usually async executors provide parallelism using two methods:
 
-* method `spawn()` that spawns async task (see `tokio::spawn` like  `async_std::task::spawn`)
+* method `spawn()` that spawns async task (see `tokio::spawn` or `async_std::task::spawn`)
 * `join!/select!()` macros to run futures concurrently without making new task
 
-I am going to investigate further the `join!/select!()` approach and as for `spawn()`  I think that it should be even easier.  Let look on this code example:
+I am going to investigate further the `join!/select!()` approach and as for `spawn()`  I think that it should be even easier. 
+
+Lets look on this code example:
 
 ```rust
 async fn cleanup(rt: &Rc<toy::Runtime>) { /* ... */ }
@@ -173,7 +168,7 @@ Unlike `join!` our `make_join2()` creates new tasks for its branches. What does 
 
 So we can draw the task structure seen by `toy::Runtime` once code execution arrives to `nested_loop()`:
 
-![task_flow](H:\home\adrop\article\img\task_flow.svg)
+![task_flow](img/task_flow.svg)
 
 So callstack is shown by arrows and be like:
 
@@ -188,17 +183,17 @@ main()
 
 We would like the `nested_loop()` not exit until `cleanup()` is completed. But now while we are waiting for the `cleanup()` to finish we can also poll the `foo()` feature! `nested_loop()` cannot poll `async_main` and  `bar` because these are unique borrowed by theirs poll method in callstack, but not nobody uses `foo as Future`, so we can temporarily borrow it to our `nested_loop()`:
 
-![task_flow](H:\home\adrop\article\img\borrowed-and-frozen.svg)
+![task_flow](img/borrowed-and-frozen.svg)
 
 The snowflake icon on future means that it is "frozen":
 
 * Runtime cannon invoke this future's  `poll()` method in `nested_loop():1` because somewhere in the callstack it was already mutually borrowed by `poll()` method
 * The frozen future can still have some I/O scheduled. When reactor awakes with event for frozen future, executor is unable to poll it, it should store the awakening event somewhere and it has to be consumed later when future will be "unfrozen". 
 
-Let look on these two possible outcomes:
+Lets look on these two possible outcomes:
 
 * `cleanup()` completed first: it means that `nested_loop()` unborrows the "`foo*()`" and exits. Execution returns up to `bar::poll()` which returns `Poll::Ready(())` and `join::poll()` returns `Poll::Pending` to `toy::run()`. 
-* `foo*()` completed first: runtime saves results somewhere and the `nested_loop():1` keeps polling only the `cleanup()`. Once `cleanup()` is done and `bar::poll()` is `Poll::Ready(())`, execution returned `join::poll()` that can now return `Poll::Ready(())` to `toy::run()` as both its futures are completed. 
+* `foo*()` completed first: runtime saves result somewhere and the `nested_loop():1` keeps polling only the `cleanup()`. Once `cleanup()` is done and `bar::poll()` is `Poll::Ready(())`, execution returned `join::poll()` that can now return `Poll::Ready(())` to `toy::run()` as both its futures are completed. 
 
 So far it looks easy. However these are not the only possible outcomes, what happens when while we have `nested_loop()` someone invokes the `nested_loop()` again?
 
@@ -206,11 +201,11 @@ So far it looks easy. However these are not the only possible outcomes, what hap
 
 So, what we going to have once in `nested_loop()` we have entered into another `nested_loop()`. For example feature `foo()` in our example also invokes `cleanup_foo()`:
 
-![task_flow](H:\home\adrop\article\img\nested_loop()_2.svg)
+![task_flow](img/nested_loop()_2.svg)
 
 In this case nested_loop will have two features to poll, `cleanup()` and `cleanup_foo()`:
 
-![task_flow](H:\home\adrop\article\img\nested_loop()_2_run.svg)
+![task_flow](img/nested_loop()_2_run.svg)
 
 Let discuss these possible outcomes:
 
@@ -226,7 +221,7 @@ As for recursive execution, the `cleanup()` futures just like any other futures 
 
 So far we only discussed running branches with `join`. What if we have some kind of select!-like construct when a first completed branch can cause futures in other branches to drop? Let look on task structure with select instead of join:
 
-![task_flow](H:\home\adrop\article\img\selecting.svg)
+![task_flow](img/selecting.svg)
 
 It looks much like the `join!` but what happens that while we are in `nested_loop()` we have discovered that `foo()` is completed? Should we still deliver reactor events and poll `baz()`? I think it depends on how we would implement `select` for toy runtime. If it is known that completing one of the branches drops the others it does not make any sense to poll `baz()` anymore. 
 
@@ -243,10 +238,14 @@ However I think it still worth some further research just to verify if any of th
 
 Why do we need the async destruction in a first place? I think that this is to connect the sync nature of future destruction to async nature of OS async cancellation API. If async cancellation is rare and short operation it can be that most of the time app did not notice it has `nested_loop()`s. And in optimistic case if we have some kind of AsyncDrop landed to rust-lang this `nested_loop()` hack can be dropped without much efforts.
 
+I have implemented a demo of runtime with `nested_loop()` that can be found in this repository:
+
 ## Links
 
 [1] https://boats.gitlab.io/blog/post/poll-drop/ "Asynchronous Destructors", withoutboats, October 16, 2019
 
-[2] https://internals.rust-lang.org/t/asynchronous-destructors/11127 discussion of the article
+[2] https://internals.rust-lang.org/t/asynchronous-destructors/11127 discussion of the article above
 
-https://internals.rust-lang.org/t/pre-rfc-leave-auto-trait-for-reliable-destruction/13825
+[3] https://boats.gitlab.io/blog/post/io-uring/, specifically the section "Blocking on drop does not work", May 6, 2020
+
+[4] https://internals.rust-lang.org/t/pre-rfc-leave-auto-trait-for-reliable-destruction/13825 discussion of alternative proposal that also related to async destruction, January 2021

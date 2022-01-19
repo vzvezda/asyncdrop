@@ -2,7 +2,7 @@
 
 
 
-1. This is the async runtime for rust that support async destruction with approach described in [my article](). 
+1. This is the async runtime for rust that support async destruction with approach described in [my article](article/async-dest.md). 
 2. It is not for production use: this is a proof of concept code that supposed to verify if what I had in my head can actually work. While making it I have discovered some difficulties I did not expect initially, so it was useful.
 
 3. To make things easier runtime only support futures with `()` as return type.

@@ -8,9 +8,9 @@ use std::task::{Context, Poll};
 
 use pin_project::pin_project;
 
-// Make a future that completes as soon as both futures are completed. Unlike other `join!`, this
-// one also creates tasks, so .
-// This is currently the only way to create tasks in this toy runtime.
+// Make a future that completes as soon as both futures are completed. Unlike other `make_join2`
+// (or `join!` in other crates). This one also creates tasks, which can be polled even if another
+// task is frozen by a nested_loop().
 pub fn make_rt_join2<'f1, 'f2, FutT1, FutT2>(
     rt: &Rc<Runtime>,
     f1: FutT1,

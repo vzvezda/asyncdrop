@@ -25,10 +25,17 @@ impl Drop for GuardedTask {
     }
 }
 
+// Task is something that can run concurrently. This toy support several ways to creat a task:
+//     * run() method to start a root task
+//     * make_rt_join2() to start two subtask
+//     * nested_loop() also create a task
+//
+//  Task made with a lot of interiour mutability and the one for future has a function sense, e.g.
+//  when borrowed it means that the task is frozen. 
 pub(super) struct Task {
     future: RefCell<Option<Pin<Box<dyn Future<Output = ()>>>>>,
     parent: RefCell<Option<Arc<Task>>>,
-    awoken_task: Arc<RefCell<Option<Arc<Task>>>>,
+    awoken_task: Arc<RefCell<Option<Arc<Task>>>>, // this is Runtime::awoken_task
     completed: Cell<bool>,
 }
 
@@ -62,7 +69,8 @@ impl Task {
         }
     }
 
-    // destroy is used to drop the future
+    // destroy is used to drop the future in the task, e.g. when leaving nested_loop we have to 
+    // be sure that future is finished.
     pub fn destroy(&self) {
         // panics if self.future is already borrowed: it should never happens unless there is
         // a bug in crate.
