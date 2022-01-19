@@ -156,15 +156,15 @@ async fn bar(rt: &Rc<toy::Runtime>) {
 }
 
 async fn async_main(rt: Rc<toy::Runtime>) {
-    toy::make_join2(&rt, foo(&rt), bar(&rt)).await;
+    toy::make_rt_join2(&rt, foo(&rt), bar(&rt)).await;
 }
 
 toy::run(|rt| async_main(rt));
 ```
 
-For further progress we need to have our own version of `join/select`, because these that are `futures` crate or `tokio` crate would not work for us. The join macro for `toy` library would be `toy::make_join2` function that takes runtime and two futures and invoke `poll()` on these until both are completed. 
+For further progress we need to have our own version of `join/select`, because these that are `futures` crate or `tokio` crate would not work for us. The join macro for `toy` library would be `toy::make_rt_join2` function that takes runtime and two futures and invoke `poll()` on these until both are completed. 
 
-Unlike `join!` our `make_join2()` creates new tasks for its branches. What does I mean saying that "`make_join2()` creates new tasks"? Well, I mean that `joy::Runtime` now aware of this branches and has some flexibility when to run these. New task does not mean it has own thread, our executor is single threaded. 
+Unlike `join!` our `make_rt_join2()` creates new tasks for its branches. What does I mean saying that "`make_rt_join2()` creates new tasks"? Well, I mean that `joy::Runtime` now aware of this branches and has some flexibility when to run these. New task does not mean it has own thread, our executor is single threaded. 
 
 So we can draw the task structure seen by `toy::Runtime` once code execution arrives to `nested_loop()`:
 
@@ -238,7 +238,7 @@ However I think it still worth some further research just to verify if any of th
 
 Why do we need the async destruction in a first place? I think that this is to connect the sync nature of future destruction to async nature of OS async cancellation API. If async cancellation is rare and short operation it can be that most of the time app did not notice it has `nested_loop()`s. And in optimistic case if we have some kind of AsyncDrop landed to rust-lang this `nested_loop()` hack can be dropped without much efforts.
 
-I have implemented a demo of runtime with `nested_loop()` that can be found in this repository:
+I have implemented a demo of runtime with `nested_loop()` that can be found in this repository: https://github.com/vzvezda/asyncdrop/
 
 ## Links
 
