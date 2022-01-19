@@ -1,12 +1,7 @@
-// TODO:
-//   * fix warnings
-//   * publish
 use std::cell::{Cell, RefCell};
 use std::future::Future;
-use std::pin::Pin;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::task::Context;
 
 use super::reactor::EventId;
 use super::reactor::Wait;
@@ -110,11 +105,11 @@ impl Runtime {
                 self.awoken_task.borrow_mut().take().unwrap()
             })
             .enumerate()
-            .find(|(pos, task)| !task.is_frozen());
+            .find(|(_pos, task)| !task.is_frozen());
 
         // Remove event from frozen_events and return as (EventId, Arc<Task>)
         pos_and_task.map(|(pos, task)| {
-            let Wait { event_id, waker } = self.frozen_events.borrow_mut().remove(pos);
+            let Wait { event_id, waker: _ } = self.frozen_events.borrow_mut().remove(pos);
             (event_id, task)
         })
     }

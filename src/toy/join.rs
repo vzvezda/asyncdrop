@@ -1,9 +1,5 @@
-use super::task::{GuardedTask, Task};
-use super::Runtime;
 use std::future::Future;
-use std::marker::PhantomData;
 use std::pin::Pin;
-use std::rc::Rc;
 use std::task::{Context, Poll};
 
 use pin_project::pin_project;
@@ -46,10 +42,6 @@ where
             fut1_done: false,
             fut2_done: false,
         }
-    }
-
-    fn is_completed(&self) -> bool {
-        self.fut1_done && self.fut2_done
     }
 }
 

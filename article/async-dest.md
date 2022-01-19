@@ -8,7 +8,7 @@ This article is to explore if we can have a `drop()` that able to keep Future-ow
 
 ## Setup
 
-Let have a toy single-thread runtime for this research. This drafts osf the idea I plan to explore in this article:
+Let's have a toy single-thread runtime for this research. This drafts the idea I plan to explore in this article:
 
 ```rust
 // Our toy runtime is here
@@ -101,13 +101,13 @@ fn main() {
 }
 ```
 
-First let address the concern that Rust has `mem::forget()` that makes it possible to have object destroyed without running it destructor. It would be unsound if someone deallocate `KernelRead` while OS writing into it. But we have the Pin for the rescue, its "Drop guarantee" says that "its memory will not get invalidated or repurposed from the moment it gets pinned until when drop is called". As the `KernelRead` is !Unpin we can be sure that either the `KernelRead` memory is valid or its `drop()` was called.
+First let's address the concern that Rust has `mem::forget()` that makes it possible to have object destroyed without running it destructor. So one can deallocate `KernelRead` while OS is writing into it. But we have the `Pin` for the rescue: its "Drop guarantee" says that "its memory will not get invalidated or repurposed from the moment it gets pinned until when drop is called". As the `KernelRead` is !Unpin we can be sure that once I/O was scheduled (thus future was pinned), it either the `KernelRead` memory is valid or its `drop()` was called.
 
-So when execution is in the destructor for `KernelRead` future it has to wait until kernel confirm it no longer writes into the buffer. `nested_loop()` function runs until kernel confirms that this is ok to have memory region de-allocated. So looks like drop() is blocked, but can we continue execution of other async task?
+So when execution is in the destructor for `KernelRead` future it has to wait until kernel confirms it no longer writes into the buffer. `nested_loop()` function runs until kernel confirms that this is ok to have memory region de-allocated. So looks like `drop()` is blocked, but can we have execution of other async tasks continued?
 
 ## N = 0
 
-Lets look on this example.
+Lets look at this example.
 
 ```rust
 async fn cleanup(rt: &Rc<toy::Runtime>) { /* ... */ }
@@ -124,7 +124,7 @@ toy::run(|rt| async_main(rt));
 
 ```
 
-While the `nested_loop()`  supposed to be invoked from Future's `fn drop(&mut self)`  it is not a requirement and in the code examples it is invoked whenever it convenient for clarity. 
+While the `nested_loop()`  supposed to be invoked from Future's `fn drop(&mut self)`  it is not a requirement and in the code examples of this article it is invoked whenever it convenient for clarity. 
 
 So what we can see:
 
@@ -132,18 +132,18 @@ So what we can see:
 * `cleanup()` is another future that is polled by `nested_loop() ` until completion
 * There is some async code before  `nested_loop() ` and after 
 
-How we would like the `nested_loop()` to behave in this case? Let assume that our toy::Runtime enforces Structured Concurrency, which means that whatever happened `async_job1(&rt).await;` line is completely finished and there is no event in reactor that can be landed anywhere. So how our `nested_loop()` supposed to work? It can work just like `toy::run()` just poll the `cleanup` future and wait until reactor has an event ready.
+How we would like the `nested_loop()` to behave in this case? Let's assume that our toy::Runtime enforces Structured Concurrency, which means that whatever happened `async_job1(&rt).await;` line is completely finished and there is no event in reactor that can be landed anywhere. So how our `nested_loop()` supposed to work? It can work just like `toy::run()` just poll the `cleanup` future and wait until reactor has an event ready.
 
 ## N = N + 1
 
 The code snippet in section above is async but it is sequential, which means that is no parallelism. There is nothing `nested_loop()` can do while it waits for the `cleanup()` future to complete. Usually async executors provide parallelism using two methods:
 
-* method `spawn()` that spawns async task (see `tokio::spawn` or `async_std::task::spawn`)
+* `spawn()` function that creates a new async task (see `tokio::spawn` or `async_std::task::spawn`)
 * `join!/select!()` macros to run futures concurrently without making new task
 
-I am going to investigate further the `join!/select!()` approach and as for `spawn()`  I think that it should be even easier. 
+I am going to investigate further the `join!/select!()` approach and as for `spawn()` I think that it should be even easier. 
 
-Lets look on this code example:
+Consider this code example:
 
 ```rust
 async fn cleanup(rt: &Rc<toy::Runtime>) { /* ... */ }
@@ -162,9 +162,9 @@ async fn async_main(rt: Rc<toy::Runtime>) {
 toy::run(|rt| async_main(rt));
 ```
 
-For further progress we need to have our own version of `join/select`, because these that are `futures` crate or `tokio` crate would not work for us. The join macro for `toy` library would be `toy::make_rt_join2` function that takes runtime and two futures and invoke `poll()` on these until both are completed. 
+For further progress we need to have our own version of `join/select`, because these that are from `futures` or `tokio` crate does not work for us. The join macro for `toy` library would be `toy::make_rt_join2` function that takes runtime and two futures and invoke `poll()` on these until both are completed. 
 
-Unlike `join!` our `make_rt_join2()` creates new tasks for its branches. What does I mean saying that "`make_rt_join2()` creates new tasks"? Well, I mean that `joy::Runtime` now aware of this branches and has some flexibility when to run these. New task does not mean it has own thread, our executor is single threaded. 
+Unlike `join!` our `make_rt_join2()` creates new tasks for its branches. What does I mean saying that "`make_rt_join2()` creates new tasks"? Well, I mean that `joy::Runtime` now aware of this branches and has some flexibility when to run these. New task does not mean it has own thread, our `toy` executor is single threaded. 
 
 So we can draw the task structure seen by `toy::Runtime` once code execution arrives to `nested_loop()`:
 
@@ -181,14 +181,14 @@ toy::run(...)
 main()
 ```
 
-We would like the `nested_loop()` not exit until `cleanup()` is completed. But now while we are waiting for the `cleanup()` to finish we can also poll the `foo()` feature! `nested_loop()` cannot poll `async_main` and  `bar` because these are unique borrowed by theirs poll method in callstack, but not nobody uses `foo as Future`, so we can temporarily borrow it to our `nested_loop()`:
+We would like the `nested_loop()` not exit until `cleanup()` is completed. But now while we are waiting for the `cleanup()` to finish we can also poll the `foo()` feature! `nested_loop()` cannot poll `async_main` and  `bar` because these are uniquely borrowed by theirs poll method in callstack, but not nobody uses `foo as Future`, so we can temporarily borrow it to our `nested_loop()`:
 
 ![task_flow](img/borrowed-and-frozen.svg)
 
 The snowflake icon on future means that it is "frozen":
 
-* Runtime cannon invoke this future's  `poll()` method in `nested_loop():1` because somewhere in the callstack it was already mutually borrowed by `poll()` method
-* The frozen future can still have some I/O scheduled. When reactor awakes with event for frozen future, executor is unable to poll it, it should store the awakening event somewhere and it has to be consumed later when future will be "unfrozen". 
+* Runtime cannon invoke this future's  `poll()` method in `nested_loop():1` because somewhere in the callstack it was already uniquely borrowed by `poll()` method
+* The frozen future can still have some I/O scheduled (like if it uses `futures::join!/select!`). When reactor awakes with event for frozen future, executor is unable to poll it, it should store the awakening event somewhere and it has to be consumed later when future will be "unfrozen". 
 
 Lets look on these two possible outcomes:
 
@@ -207,19 +207,19 @@ In this case nested_loop will have two features to poll, `cleanup()` and `cleanu
 
 ![task_flow](img/nested_loop()_2_run.svg)
 
-Let discuss these possible outcomes:
+Let's discuss these possible outcomes:
 
 * `cleanup_foo()` completes first and it means that nested_loop():2 can exit. The `nested_loop()`:1 has still poll the `cleanup()` until it finish.
 
-* `cleanup()` completes first: well, this is the interesting consequence of this approach that `nested_loop():2` cannot exist until cleanup_foo() completed. Which means that even if future `bar()` is ready to return `Poll::Ready()`, it's result cannot be delivered because some other feature from task tree has launched `nested_loop()`.
+* `cleanup()` completes first: well, this is the interesting consequence of this approach that `nested_loop():2` cannot exit until `cleanup_foo()` is completed. Which means that even if future `bar()` is ready to return `Poll::Ready()`, it's result cannot be delivered because some other feature from task tree has launched `nested_loop()`.
 
-  It looks very concerning.  Just imagine that you have several `nested_loop()` in the callstack and some of these have their future completed but cannot return because of `nested_loop()` somewhere in the top of the callstack. Does it makes this approach impractical? There are some chances, but I am not convinced yet, I think it require further verification. 
+  It looks very concerning.  Just imagine that you have several `nested_loop()` in the callstack and some of these have their future completed but cannot return because of `nested_loop()` somewhere in the top of the callstack. Does it makes this approach impractical? Perhaps, but I am not convinced yet, I think it requires further verification. 
 
 As for recursive execution, the `cleanup()` futures just like any other futures can have `join!/select!` and `nested_loop()` internally. It makes the runtime execution structure more complex but It does not make the program incorrect. When cleanup invokes `nested_loop()` it become frozen and cannot be polled until internal `nested_loop()` exits.
 
 ## Selecting
 
-So far we only discussed running branches with `join`. What if we have some kind of select!-like construct when a first completed branch can cause futures in other branches to drop? Let look on task structure with select instead of join:
+So far we only discussed running branches with `join`. What if we have some kind of `select!`-like construct when a first completed branch can cause futures in other branches to drop? Let's look on task structure with select instead of join:
 
 ![task_flow](img/selecting.svg)
 
@@ -236,9 +236,11 @@ There are some number of thing to dislike and to be concerned with proposed appr
 
 However I think it still worth some further research just to verify if any of these concerns would actually create some pain.
 
-Why do we need the async destruction in a first place? I think that this is to connect the sync nature of future destruction to async nature of OS async cancellation API. If async cancellation is rare and short operation it can be that most of the time app did not notice it has `nested_loop()`s. And in optimistic case if we have some kind of AsyncDrop landed to rust-lang this `nested_loop()` hack can be dropped without much efforts.
+Why do we need the async destruction in a first place? I think that this is to connect the sync nature of future destruction to async nature of OS async cancellation API. If async cancellation is rare and short operation it can be that most of the time app did not notice it has `nested_loop()`s. And in optimistic scenario if we have some kind of AsyncDrop landed to rust-lang this `nested_loop()` hack can be dropped without much efforts.
 
-I have implemented a demo of runtime with `nested_loop()` that can be found in this repository: https://github.com/vzvezda/asyncdrop/
+## Implementation
+
+I have implemented a proof of concept toy runtime and demo app with `nested_loop()` that can be found in this repository: https://github.com/vzvezda/asyncdrop/. 
 
 ## Links
 

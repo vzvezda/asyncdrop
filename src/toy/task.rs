@@ -1,7 +1,6 @@
 use std::cell::{Cell, RefCell};
 use std::future::Future;
 use std::pin::Pin;
-use std::rc::Rc;
 use std::sync::Arc;
 use std::task::{Context, Poll, Wake};
 
@@ -172,7 +171,7 @@ impl Task {
     pub fn is_completed(&self) -> bool {
         match self.future.try_borrow() {
             Err(_) => false,
-            Ok(future) => self.completed.get(),
+            Ok(_) => self.completed.get(),
         }
     }
 }

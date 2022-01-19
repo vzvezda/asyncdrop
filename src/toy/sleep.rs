@@ -43,7 +43,7 @@ impl Sleep {
         Poll::Pending
     }
 
-    fn complete(&mut self, timer_id: EventId, waker: &Waker) -> Poll<()> {
+    fn complete(&mut self, timer_id: EventId, _waker: &Waker) -> Poll<()> {
         if self.rt.is_awoken(timer_id) {
             self.poll_state = PollState::Done;
             Poll::Ready(())
